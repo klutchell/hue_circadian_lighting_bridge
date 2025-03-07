@@ -68,16 +68,21 @@ async def update_scene_lights(session, hue_gateway, key, scene, brightness, xy, 
         r = r['lights']
         _LOGGER.debug(f"Updating scene id: {scene}")
         for val in r:
-            url = f"http://{hue_gateway}/api/{key}/lights/{val}"
-            async with session.get(url) as t_response:
-                t = await t_response.json()
-                type = t['type']
-                url = f"http://{hue_gateway}/api/{key}/scenes/{scene}/lightstates/{val}"
-                body = json.dumps({'on': True, 'bri': brightness, 'xy': xy, 'ct': mired})
-                async with session.put(url, data=body) as r_response:
-                    _LOGGER.debug(f"light id: {val} body {body} status code: {r_response.status}")
-                    if r_response.status != 200:
-                        _LOGGER.error(f"light id: {val} body {body} status code: {r_response.status}")
+            # url = f"http://{hue_gateway}/api/{key}/lights/{val}"
+            # async with session.get(url) as t_response:
+            #     t = await t_response.json()
+            #     type = t['type']
+            #     _LOGGER.debug(f"light id: {val} response: {t}")
+            url = f"http://{hue_gateway}/api/{key}/scenes/{scene}/lightstates/{val}"
+            # brightness_scaled = round(brightness * 2.54)
+            # body = json.dumps({'on': True, 'bri': brightness, 'xy': xy, 'ct': mired})
+            body = json.dumps({'on': True, 'bri': brightness, 'ct': mired})
+            async with session.put(url, data=body) as r_response:
+                _LOGGER.debug(f"light id: {val} body {body} status code: {r_response.status}")
+                if r_response.status != 200:
+                    _LOGGER.error(f"light id: {val} body {body} status code: {r_response.status}")
+                j = await r_response.json()
+                _LOGGER.debug(f"light id: {val} response: {j}")
 
 
 
@@ -135,6 +140,8 @@ async def update_hue_scenes(hass, new_state):
                     "Using get_brightness function. Calculated brightness: %s",
                     brightness,
                 )
+            else:
+                brightness = round(brightness * 2.54)
 
             xy = get_xy_color(hass, new_state)
             mired = get_colortemp(hass, new_state)
@@ -267,14 +274,14 @@ async def async_setup_bridge(hass, config_entry):
                     await asyncio.sleep(5)
             return False
 
-        if not await retry_connect():
-            _LOGGER.error(
-                "Failed to connect to the Philips Hue bridge at %s. "
-                "API Key: %s"
-                "Please check the host and try again.",
-                bridge_ip, bridge_username
-            )
-            return False
+        # if not await retry_connect():
+        #     _LOGGER.error(
+        #         "Failed to connect to the Philips Hue bridge at %s. "
+        #         "API Key: %s"
+        #         "Please check the host and try again.",
+        #         bridge_ip, bridge_username
+        #     )
+        #     return False
 
     return True
 
