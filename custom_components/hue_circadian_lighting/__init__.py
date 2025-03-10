@@ -16,7 +16,6 @@ BRIDGE_DATA_KEY = "circadian_lighting_bridge_bridge"
 ENTITY_DOMAIN = "switch"
 ENTITY_PREFIX = "circadian_lighting"
 
-
 async def async_setup(hass, config):
     """Set up the Circadian Lighting Bridge component."""
     hass.data.setdefault(DOMAIN, {})
@@ -61,21 +60,14 @@ def get_hue_gateway_and_key():
     return bridges
 
 
-async def update_scene_lights(session, hue_gateway, key, scene, brightness, xy, mired):
+async def update_scene_lights(session, hue_gateway, key, scene, brightness, mired):
     url = f"http://{hue_gateway}/api/{key}/scenes/{scene}/"
     async with session.get(url) as response:
         r = await response.json()
         r = r['lights']
         _LOGGER.debug(f"Updating scene id: {scene}")
         for val in r:
-            # url = f"http://{hue_gateway}/api/{key}/lights/{val}"
-            # async with session.get(url) as t_response:
-            #     t = await t_response.json()
-            #     type = t['type']
-            #     _LOGGER.debug(f"light id: {val} response: {t}")
             url = f"http://{hue_gateway}/api/{key}/scenes/{scene}/lightstates/{val}"
-            # brightness_scaled = round(brightness * 2.54)
-            # body = json.dumps({'on': True, 'bri': brightness, 'xy': xy, 'ct': mired})
             body = json.dumps({'on': True, 'bri': brightness, 'ct': mired})
             async with session.put(url, data=body) as r_response:
                 _LOGGER.debug(f"light id: {val} body {body} status code: {r_response.status}")
@@ -94,57 +86,21 @@ async def update_hue_scenes(hass, new_state):
             await asyncio.sleep(10)
             tasks = []
 
-            switches = [
-                entity_id
-                for entity_id in hass.states.async_entity_ids("switch")
-                if entity_id.startswith("switch.circadian_lighting")
-            ]
+            try:
+                switch_id = get_switch_id(hass)
 
-            brightness = None
+                # switch_state = get_switch_state(hass, switch_id)
 
-            for switch in switches:
-                switch_state = hass.states.get(switch)
-                brightness = switch_state.attributes.get('brightness')
-                if brightness is not None:
-                    _LOGGER.info(
-                        "Found switch '%s' with brightness: %s",
-                        switch,
-                        brightness,
-                    )
-                    break
-            else:
-                _LOGGER.info("No switch found with brightness.")
+                brightness = get_brightness(hass, switch_id)
+                _LOGGER.info("Got brightness '%s' for switch '%s'", brightness, switch_id)
+                
+                brightness_scaled = round(brightness * 2.54)
+                _LOGGER.info("Got brightness_scaled '%s' for switch '%s'", brightness_scaled, switch_id)
 
-            if brightness is None:
-                if new_state and new_state.attributes.get("brightness"):
-                    log_message = str(new_state)
-                    brightness_match = re.search(r"brightness=(\d+)", log_message, re.IGNORECASE)
-                    if brightness_match:
-                        brightness = int(brightness_match.group(1))
-                        _LOGGER.info(
-                            "Extracted brightness from log message: %s",
-                            brightness,
-                        )
-                    else:
-                        brightness = new_state.attributes.get("brightness")
-                        _LOGGER.info(
-                            "Extracted brightness from state attributes: %s",
-                            brightness,
-                        )
-                else:
-                    _LOGGER.info("No switch found with brightness and no valid brightness value extracted.")
-
-            if brightness is None or brightness == "Unknown":
-                brightness = get_brightness(hass, new_state)
-                _LOGGER.info(
-                    "Using get_brightness function. Calculated brightness: %s",
-                    brightness,
-                )
-            else:
-                brightness = round(brightness * 2.54)
-
-            xy = get_xy_color(hass, new_state)
-            mired = get_colortemp(hass, new_state)
+                colortemp_mireds = get_colortemp(hass, switch_id)
+                _LOGGER.info("Got colortemp '%s' for switch '%s'", colortemp_mireds, switch_id)
+            except Exception as e:
+                return
 
             for bridge_ip, bridge_username in bridges:
                 hue_gateway = bridge_ip
@@ -161,11 +117,10 @@ async def update_hue_scenes(hass, new_state):
 
                     for val in scenes:
                         _LOGGER.info(
-                            "Updating scene '%s' with brightness: %s, xy: %s, colortemp: %s",
+                            "Updating scene '%s' with brightness: %s, colortemp: %s",
                             val,
-                            brightness if brightness is not None else "N/A",
-                            xy,
-                            mired,
+                            brightness_scaled,
+                            colortemp_mireds,
                         )
 
                         tasks.append(
@@ -174,9 +129,8 @@ async def update_hue_scenes(hass, new_state):
                                 hue_gateway,
                                 key,
                                 val,
-                                brightness,
-                                xy,
-                                mired,
+                                brightness_scaled,
+                                colortemp_mireds,
                             )
                         )
 
@@ -185,8 +139,25 @@ async def update_hue_scenes(hass, new_state):
     except Exception as e:
         raise e
 
-def get_colortemp(hass, new_state):
-    entity_id = 'sensor.circadian_values'
+def get_switch_id(hass):
+    switches = [
+        entity_id
+        for entity_id in hass.states.async_entity_ids("switch")
+        if entity_id.startswith("switch.circadian_lighting")
+    ]
+
+    if len(switches) == 0:
+        raise ValueError("No switch found")
+
+    return switches[0]
+
+def get_switch_state(hass, entity_id):
+    state = hass.states.get(entity_id)
+    if state is None:
+        raise ValueError(f'Entity {entity_id} not found')
+    return state
+
+def get_colortemp(hass, entity_id):
     state = hass.states.get(entity_id)
     if state is None:
         raise ValueError(f'Entity {entity_id} not found')
@@ -199,9 +170,7 @@ def get_colortemp(hass, new_state):
 
     return colortemp_mireds
 
-
-def get_xy_color(hass, new_state):
-    entity_id = 'sensor.circadian_values'
+def get_xy_color(hass, entity_id):
     state = hass.states.get(entity_id)
     if state is None:
         raise ValueError(f'Entity {entity_id} not found')
@@ -212,13 +181,15 @@ def get_xy_color(hass, new_state):
 
     return xy_color
 
+def get_brightness(hass, entity_id):
+    state = hass.states.get(entity_id)
+    if state is None:
+        raise ValueError(f'Entity {entity_id} not found')
 
-def get_brightness(hass, new_state):
-    colortemp = get_colortemp(hass, new_state)
-    brightness = int(round((colortemp / 500) * 254))
-
+    brightness = state.attributes.get('brightness', 100)  # Default to 100 if not found
+    if brightness is None:
+        raise ValueError(f'brightness attribute not found for entity {entity_id}')
     return brightness
-
 
 async def async_setup_bridge(hass, config_entry):
     """Set up the Circadian Lighting Bridge component."""
